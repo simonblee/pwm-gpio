@@ -51,23 +51,19 @@ struct gpio_pwm_data
 
 static void gpio_pwm_off(struct gpio_pwm_data *gpio_data)
 {
-	gpiod_set_value_cansleep(gpio_data->gpio_pwm,
-													 gpio_data->polarity ? 1 : 0);
+	gpiod_set_value_cansleep(gpio_data->gpio_pwm, gpio_data->polarity ? 1 : 0);
 	gpio_data->pin_on = false;
 }
 
 static void gpio_pwm_on(struct gpio_pwm_data *gpio_data)
 {
-	gpiod_set_value_cansleep(gpio_data->gpio_pwm,
-													 gpio_data->polarity ? 0 : 1);
+	gpiod_set_value_cansleep(gpio_data->gpio_pwm, gpio_data->polarity ? 0 : 1);
 	gpio_data->pin_on = true;
 }
 
 enum hrtimer_restart gpio_pwm_timer(struct hrtimer *timer)
 {
-	struct gpio_pwm_data *gpio_data = container_of(timer,
-																								 struct gpio_pwm_data,
-																								 timer);
+	struct gpio_pwm_data *gpio_data = container_of(timer, struct gpio_pwm_data, timer);
 	u64 missed_intervals;
 
 	if (!gpio_data->pin_on)
@@ -127,8 +123,7 @@ static int gpio_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	return 0;
 }
 
-static int gpio_pwm_set_polarity(struct pwm_chip *chip, struct pwm_device *pwm,
-																 enum pwm_polarity polarity)
+static int gpio_pwm_set_polarity(struct pwm_chip *chip, struct pwm_device *pwm, enum pwm_polarity polarity)
 {
 	struct gpio_pwm_data *gpio_data = pwm_get_chip_data(pwm);
 
@@ -152,8 +147,7 @@ static int gpio_pwm_enable(struct pwm_chip *chip, struct pwm_device *pwm)
 	}
 
 	gpio_data->is_running = true;
-	hrtimer_start(&gpio_data->timer, ktime_set(0, 0),
-								HRTIMER_MODE_REL);
+	hrtimer_start(&gpio_data->timer, ktime_set(0, 0), HRTIMER_MODE_REL);
 
 	// mutex_unlock(&gpio_data->lock);
 
@@ -195,12 +189,10 @@ static int gpio_pwm_request(struct pwm_chip *chip, struct pwm_device *pwm)
 		return PTR_ERR(gpio_pwm);
 	}
 
-	hrtimer_init(&gpio_data->timer,
-							 CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_init(&gpio_data->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
 	if (!hrtimer_is_hres_active(&gpio_data->timer))
-		dev_warn(chip->dev, "HR timer unavailable, restricting to \
-				     low resolution\n");
+		dev_warn(chip->dev, "HR timer unavailable, restricting to low resolution\n");
 
 	gpio_data->timer.function = &gpio_pwm_timer;
 	gpio_data->gpio_pwm = gpio_pwm;
