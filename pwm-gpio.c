@@ -30,13 +30,15 @@
 #include <linux/ktime.h>
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
+#include <linux/slab.h>
 
-struct gpio_pwm_chip {
+struct gpio_pwm_chip
+{
 	struct pwm_chip chip;
 };
 
-struct gpio_pwm_data {
-
+struct gpio_pwm_data
+{
 	bool is_running;
 	bool polarity;
 	bool pin_on;
@@ -50,57 +52,89 @@ struct gpio_pwm_data {
 static void gpio_pwm_off(struct gpio_pwm_data *gpio_data)
 {
 	gpiod_set_value_cansleep(gpio_data->gpio_pwm,
-		gpio_data->polarity ? 1 : 0);
+													 gpio_data->polarity ? 1 : 0);
 	gpio_data->pin_on = false;
 }
 
 static void gpio_pwm_on(struct gpio_pwm_data *gpio_data)
 {
 	gpiod_set_value_cansleep(gpio_data->gpio_pwm,
-		gpio_data->polarity ? 0 : 1);
+													 gpio_data->polarity ? 0 : 1);
 	gpio_data->pin_on = true;
 }
 
 enum hrtimer_restart gpio_pwm_timer(struct hrtimer *timer)
 {
 	struct gpio_pwm_data *gpio_data = container_of(timer,
-						  struct gpio_pwm_data,
-						  timer);
+																								 struct gpio_pwm_data,
+																								 timer);
+	u64 missed_intervals;
 
-	if (!gpio_data->pin_on) {
-		gpio_pwm_on(gpio_data);
-		hrtimer_forward_now(&gpio_data->timer,
-				    ns_to_ktime(gpio_data->on_time));
-	} else {
+	if (!gpio_data->pin_on)
+	{
+		if (gpio_data->on_time > 0)
+		{
+			gpio_pwm_on(gpio_data);
+		}
+
+		missed_intervals = hrtimer_forward_now(&gpio_data->timer, ns_to_ktime(gpio_data->on_time));
+	}
+	else
+	{
 		gpio_pwm_off(gpio_data);
-		hrtimer_forward_now(&gpio_data->timer,
-				    ns_to_ktime(gpio_data->off_time));
+		missed_intervals = hrtimer_forward_now(&gpio_data->timer, ns_to_ktime(gpio_data->off_time));
 	}
 
 	return HRTIMER_RESTART;
 }
 
 static int gpio_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
-			    int duty_ns, int period_ns)
+													 int duty_ns, int period_ns)
 {
+	int remaining_ns, prev_on_time_ns, prev_off_time_ns, new_expiry_ns = 0;
 	struct gpio_pwm_data *gpio_data = pwm_get_chip_data(pwm);
 
-	mutex_lock(&gpio_data->lock);
+	// mutex_lock(&gpio_data->lock);
+	prev_on_time_ns = gpio_data->on_time;
+	prev_off_time_ns = gpio_data->off_time;
 	gpio_data->on_time = duty_ns;
 	gpio_data->off_time = period_ns - duty_ns;
-	mutex_unlock(&gpio_data->lock);
+	// mutex_unlock(&gpio_data->lock);
+
+	remaining_ns = ktime_to_ns(hrtimer_get_remaining(&gpio_data->timer));
+	hrtimer_cancel(&gpio_data->timer);
+
+	if (gpio_data->pin_on)
+	{
+		int expired_ns = prev_on_time_ns - remaining_ns;
+		if (expired_ns < gpio_data->on_time)
+		{
+			new_expiry_ns = gpio_data->on_time - expired_ns;
+		}
+	}
+	else
+	{
+		int expired_ns = prev_off_time_ns - remaining_ns;
+		if (expired_ns < gpio_data->off_time)
+		{
+			new_expiry_ns = gpio_data->off_time - expired_ns;
+		}
+	}
+
+	hrtimer_start(&gpio_data->timer, ns_to_ktime(new_expiry_ns), HRTIMER_MODE_REL);
+	// hrtimer_forward_now(&gpio_data->timer, ns_to_ktime(new_expiry_ns));
 
 	return 0;
 }
 
 static int gpio_pwm_set_polarity(struct pwm_chip *chip, struct pwm_device *pwm,
-				 enum pwm_polarity polarity)
+																 enum pwm_polarity polarity)
 {
 	struct gpio_pwm_data *gpio_data = pwm_get_chip_data(pwm);
 
-	mutex_lock(&gpio_data->lock);
+	// mutex_lock(&gpio_data->lock);
 	gpio_data->polarity = (polarity != PWM_POLARITY_NORMAL) ? true : false;
-	mutex_unlock(&gpio_data->lock);
+	// mutex_unlock(&gpio_data->lock);
 
 	return 0;
 }
@@ -109,18 +143,19 @@ static int gpio_pwm_enable(struct pwm_chip *chip, struct pwm_device *pwm)
 {
 	struct gpio_pwm_data *gpio_data = pwm_get_chip_data(pwm);
 
-	mutex_lock(&gpio_data->lock);
+	// mutex_lock(&gpio_data->lock);
 
-	if (gpio_data->is_running) {
-		mutex_unlock(&gpio_data->lock);
+	if (gpio_data->is_running)
+	{
+		// mutex_unlock(&gpio_data->lock);
 		return -EBUSY;
 	}
 
 	gpio_data->is_running = true;
 	hrtimer_start(&gpio_data->timer, ktime_set(0, 0),
-			HRTIMER_MODE_REL);
+								HRTIMER_MODE_REL);
 
-	mutex_unlock(&gpio_data->lock);
+	// mutex_unlock(&gpio_data->lock);
 
 	return 0;
 }
@@ -129,10 +164,11 @@ static void gpio_pwm_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 {
 	struct gpio_pwm_data *gpio_data = pwm_get_chip_data(pwm);
 
-	mutex_lock(&gpio_data->lock);
+	// mutex_lock(&gpio_data->lock);
 
-	if (!gpio_data->is_running) {
-		mutex_unlock(&gpio_data->lock);
+	if (!gpio_data->is_running)
+	{
+		// mutex_unlock(&gpio_data->lock);
 		return;
 	}
 
@@ -140,7 +176,7 @@ static void gpio_pwm_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 	gpio_pwm_off(gpio_data);
 	gpio_data->is_running = false;
 
-	mutex_unlock(&gpio_data->lock);
+	// mutex_unlock(&gpio_data->lock);
 }
 
 static int gpio_pwm_request(struct pwm_chip *chip, struct pwm_device *pwm)
@@ -153,13 +189,14 @@ static int gpio_pwm_request(struct pwm_chip *chip, struct pwm_device *pwm)
 		return -ENOMEM;
 
 	gpio_pwm = gpiod_get(chip->dev, "pwm", GPIOD_OUT_LOW);
-	if (IS_ERR(gpio_pwm)) {
+	if (IS_ERR(gpio_pwm))
+	{
 		dev_err(chip->dev, "failed to retrieve pwm from dts\n");
 		return PTR_ERR(gpio_pwm);
 	}
 
 	hrtimer_init(&gpio_data->timer,
-		     CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+							 CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
 	if (!hrtimer_is_hres_active(&gpio_data->timer))
 		dev_warn(chip->dev, "HR timer unavailable, restricting to \
@@ -183,13 +220,13 @@ static void gpio_pwm_free(struct pwm_chip *chip, struct pwm_device *pwm)
 }
 
 static const struct pwm_ops gpio_pwm_ops = {
-	.config         = gpio_pwm_config,
-	.set_polarity   = gpio_pwm_set_polarity,
-	.enable         = gpio_pwm_enable,
-	.disable        = gpio_pwm_disable,
-	.request        = gpio_pwm_request,
-	.free           = gpio_pwm_free,
-	.owner          = THIS_MODULE,
+		.config = gpio_pwm_config,
+		.set_polarity = gpio_pwm_set_polarity,
+		.enable = gpio_pwm_enable,
+		.disable = gpio_pwm_disable,
+		.request = gpio_pwm_request,
+		.free = gpio_pwm_free,
+		.owner = THIS_MODULE,
 };
 
 static int gpio_pwm_probe(struct platform_device *pdev)
@@ -207,7 +244,8 @@ static int gpio_pwm_probe(struct platform_device *pdev)
 	gpio_chip->chip.npwm = 1;
 
 	ret = pwmchip_add(&gpio_chip->chip);
-	if (ret < 0) {
+	if (ret < 0)
+	{
 		dev_err(&pdev->dev, "failed to add pwm gpio chip %d\n", ret);
 		return -ENODEV;
 	}
@@ -225,18 +263,20 @@ static int gpio_pwm_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id gpio_pwm_of_match[] = {
-	{ .compatible = "pwm-gpio", },
-	{},
+		{
+				.compatible = "pwm-gpio",
+		},
+		{},
 };
 MODULE_DEVICE_TABLE(of, gpio_pwm_of_match);
 
 static struct platform_driver gpio_pwm_driver = {
-	.probe = gpio_pwm_probe,
-	.remove = gpio_pwm_remove,
-	.driver = {
-		.name = "pwm-gpio",
-		.of_match_table = of_match_ptr(gpio_pwm_of_match),
-	},
+		.probe = gpio_pwm_probe,
+		.remove = gpio_pwm_remove,
+		.driver = {
+				.name = "pwm-gpio",
+				.of_match_table = of_match_ptr(gpio_pwm_of_match),
+		},
 };
 module_platform_driver(gpio_pwm_driver);
 
