@@ -84,8 +84,7 @@ enum hrtimer_restart gpio_pwm_timer(struct hrtimer *timer)
 	return HRTIMER_RESTART;
 }
 
-static int gpio_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
-													 int duty_ns, int period_ns)
+static int gpio_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm, int duty_ns, int period_ns)
 {
 	int remaining_ns, prev_on_time_ns, prev_off_time_ns, new_expiry_ns = 0;
 	struct gpio_pwm_data *gpio_data = pwm_get_chip_data(pwm);
